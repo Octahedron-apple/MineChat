@@ -1,6 +1,10 @@
 { pkgs ? import <nixpkgs> {} }:
 pkgs.mkShell {
   buildInputs = with pkgs; [
+    # C/C++ Tools
+    gcc gdb gnumake cmake valgrind clang-tools
+
+    # Python Dependencies
     python3 python3Packages.tkinter pkg-config
 
     # Core C/C++ (libc, libm, libdl, libpthread, librt, libstdc++, libgcc_s)
