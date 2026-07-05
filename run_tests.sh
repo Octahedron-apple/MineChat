@@ -7,4 +7,4 @@ echo "Compiling C wrapper..."
 gcc -shared -fPIC -o tests/libcubiomes_wrapper.so tests/test_wrapper.c -L. -lcubiomes -Wl,-rpath=$(pwd)
 
 echo "Running pytest..."
-python3 -m pytest tests/test_cubiomes.py -v
+python3 -m pytest tests/ -v

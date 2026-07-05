@@ -26,15 +26,13 @@ def auto_compile():
         print("Error: 'make' command not found. Ensure you are running inside 'nix-shell'.", file=sys.stderr)
         sys.exit(1)
 
-auto_compile()
-
-try:
-    cubiomes = ctypes.CDLL(lib_path)
-    print("Successfully loaded libcubiomes.so")
-except OSError as e:
-    print(f"Error loading library: {e}")
-    print("Make sure you ran the gcc compilation command in the root folder first.")
-    sys.exit(1)
+def load_library():
+    auto_compile()
+    try:
+        return ctypes.CDLL(lib_path)
+    except OSError as e:
+        print(f"Error loading library: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 # ==============================================================================
@@ -169,8 +167,6 @@ def _setup_signatures(lib):
     lib.setBiomeSeed.restype = None
     lib.setupBiomeFilter.argtypes = [ctypes.POINTER(BiomeFilter), ctypes.c_int, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.c_int]
     lib.setupBiomeFilter.restype = None
-    lib.doublePerlinInit.argtypes = [ctypes.POINTER(DoublePerlinNoise), ctypes.POINTER(ctypes.c_uint64), ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
-    lib.doublePerlinInit.restype = None
     lib.setupLayerStack.argtypes = [ctypes.POINTER(LayerStack), ctypes.c_int, ctypes.c_uint32]
     lib.setupLayerStack.restype = None
 
@@ -266,6 +262,7 @@ def _setup_signatures(lib):
     lib.monteCarloBiomes.argtypes = [ctypes.POINTER(Generator), Range, ctypes.POINTER(ctypes.c_uint64), ctypes.c_double, ctypes.c_double, ctypes.c_void_p, ctypes.c_void_p]
     lib.monteCarloBiomes.restype = ctypes.c_int
 
+cubiomes = load_library()
 _setup_signatures(cubiomes)
 
 
@@ -305,12 +302,6 @@ def setup_biome_filter(bf: BiomeFilter, mc_version: int, flags: int = 0, biomes:
     a_arr, a_len = ((ctypes.c_int * len(avoid))(*avoid), len(avoid)) if avoid else (None, 0)
     s_arr, s_len = ((ctypes.c_int * len(special))(*special), len(special)) if special else (None, 0)
     cubiomes.setupBiomeFilter(ctypes.byref(bf), mc_version, flags, b_arr, b_len, a_arr, a_len, s_arr, s_len)
-
-def init_double_perlin_noise(dpn: DoublePerlinNoise, seed: int, first_octave: int, amplitudes: list[float]) -> None:
-    """Initializes a DoublePerlinNoise generator."""
-    s_val = ctypes.c_uint64(seed)
-    amp_arr = (ctypes.c_double * len(amplitudes))(*amplitudes)
-    cubiomes.doublePerlinInit(ctypes.byref(dpn), ctypes.byref(s_val), first_octave, len(amplitudes), amp_arr)
 
 def setup_layer_stack(ls: LayerStack, mc_version: int, flags: int = 0) -> None:
     """Initializes a LayerStack structure for versions up to 1.17."""
@@ -403,21 +394,29 @@ def get_mineshafts(mc_version: int, seed: int, chunk_x: int, chunk_z: int, chunk
     return cubiomes.getMineshafts(mc_version, seed & 0xffffffffffff, chunk_x, chunk_z, chunk_w, chunk_h, out_pos_array, nout)
 
 def is_slime_chunk(seed: int, chunk_x: int, chunk_z: int) -> int:
-    """
-    Slime Chunk Qualification.
-    Inputs: Complete 64-bit world seed variable alongside targeted chunk grid indices (chunk_x, chunk_z).
-    Returns: Integer boolean answer (1 if chunk coordinate criteria triggers slime-spawning calculation logic, 0 if not).
-    """
-    rnd = seed & 0xffffffffffffffff
-    rnd += ctypes.c_int32(chunk_x * 0x5ac0db).value
-    rnd += ctypes.c_int32(chunk_x * chunk_x * 0x4c1906).value
-    rnd += ctypes.c_int32(chunk_z * 0x5f24f).value
-    rnd += ctypes.c_int32(chunk_z * chunk_z * 0x4307a7).value
-    rnd &= 0xffffffffffffffff
-    rnd ^= (rnd >> 16)
-    rnd ^= (rnd >> 32)
-    rnd = (rnd * 0x5deece66d + 0xb) & 0xffffffffffff
-    return 1 if (rnd % 10) == 0 else 0
+    """Correct Java-equivalent Slime Chunk Spawning Logic."""
+    # 1. Combine seed and chunk coordinates exactly like Java Edition
+    # Java precedence: addition happens first, then bitwise XOR at the end
+    combined_seed = (
+        seed +
+        ctypes.c_int32(chunk_x * chunk_x * 0x4c1906).value +
+        ctypes.c_int32(chunk_x * 0x5ac0db).value +
+        ctypes.c_int32(chunk_z * chunk_z * 0x4307a7).value +
+        ctypes.c_int32(chunk_z * 0x5f24f).value ^ 0x3ad8025f
+    ) & 0xffffffffffffffff
+
+    # 2. Simulate Java Random Initial Scramble
+    multiplier = 0x5DEECE66D
+    addend = 0xB
+    mask = (1 << 48) - 1
+    
+    internal_state = (combined_seed ^ multiplier) & mask
+    
+    # 3. Simulate nextInt(10) step
+    internal_state = (internal_state * multiplier + addend) & mask
+    bits = internal_state >> 17  # Extract top 31 bits
+    
+    return 1 if (bits % 10) == 0 else 0
 
 def get_end_islands(islands: ctypes.POINTER(EndIsland), mc_version: int, seed: int, chunk_x: int, chunk_z: int) -> int:
     """

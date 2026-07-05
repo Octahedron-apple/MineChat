@@ -176,11 +176,13 @@ def test_sample_biome_noise():
     assert biome >= 0
 
 def test_get_para_range():
-    dpn = m.DoublePerlinNoise()
-    m.init_double_perlin_noise(dpn, 12345, -2, [1.0, 1.0])
+    bn = m.BiomeNoise()
+    m.init_biome_noise(bn, MC_1_19_4)
+    m.set_biome_seed(bn, 12345, 0)
+    dpn = ctypes.cast(ctypes.byref(bn), ctypes.POINTER(m.DoublePerlinNoise))
     pmin = ctypes.c_double()
     pmax = ctypes.c_double()
-    err = m.get_para_range(ctypes.byref(dpn), ctypes.byref(pmin), ctypes.byref(pmax), 0, 0, 16, 16)
+    err = m.get_para_range(dpn, ctypes.byref(pmin), ctypes.byref(pmax), 0, 0, 16, 16)
     assert err == 0
     assert pmin.value <= pmax.value
 
@@ -194,12 +196,15 @@ def test_biome_para_tables():
     assert any(ids[i] != b'\x00' for i in range(256))
 
 def test_get_largest_rec():
-    ids = (ctypes.c_int * 100)(*[14]*100)
+    ids = (ctypes.c_int * 100)()
+    for i in range(100):
+        if (i % 10 < 8) and (i // 10 < 8):
+            ids[i] = 14
     p0 = m.Pos()
     p1 = m.Pos()
     area = m.get_largest_rec(14, ids, 10, 10, ctypes.byref(p0), ctypes.byref(p1))
-    assert area == 100
-    assert p0.x == 0 and p0.z == 0 and p1.x == 9 and p1.z == 9
+    assert area == 64
+    assert p0.x == 0 and p0.z == 0 and p1.x == 7 and p1.z == 7
 
 def test_map_approx_height():
     g = m.create_generator(MC_1_19_4)
@@ -245,5 +250,10 @@ def test_monte_carlo_biomes():
     m.apply_seed(g, 0, 12345)
     r = m.Range(4, 0, 0, 10, 10, 0, 1)
     rng = ctypes.c_uint64(12345)
-    res = m.monte_carlo_biomes(g, r, ctypes.byref(rng), 0.5, 0.95)
+    
+    @ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(m.Generator), ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p)
+    def dummy_eval(gen, scale, x, y, z, data):
+        return 1
+        
+    res = m.monte_carlo_biomes(g, r, ctypes.byref(rng), 0.5, 0.95, ctypes.cast(dummy_eval, ctypes.c_void_p))
     assert res in [0, 1]
